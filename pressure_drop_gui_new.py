@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+"""The following was written by Claude based on a code I gave it"""
+
 """
 Pressure budget GUI - wrapper around the feed-line pressure drop script.
 Your original script is untouched: compute() below repeats the same
