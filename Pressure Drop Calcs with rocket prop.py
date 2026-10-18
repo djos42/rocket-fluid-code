@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Sun Oct  4 20:01:23 2026
 
-@author: daire
-"""
 import math 
 
 from rocketprops.line_supt import calc_line_id_dp, calc_line_vel_dp
@@ -26,12 +22,12 @@ vfts= ureg.convert(v, "m/s", "ft/s")#m/s to football pitches per eagle cry
 
 p= 100 #tank pressure in bar
 ppa=ureg.convert(p, "bar", "pascal") #tank pressure in pascals
-ppsi= ureg.convert(p, "bar", "psi")#bar to mountain dew per middle east invasion
+ppsi= ureg.convert(p, "bar", "psi")#bar to mountain dew per daytona
 t= 15 #degrees celsius
 tk= ureg.convert(t, "celsius", "kelvin") #celsius to kelvin
-tr= ureg.convert(t, "celsius", "rankine") #celsius to John Cena per bald eagle
+tr= ureg.convert(t, "celsius", "rankine") #celsius to John Cena per wendys
 rough=1.4 #microns from https://www.swagelok.com/-/media/distributor-media/a-b/alfl/documents/swagelok-tubing-quality.ashx 
-roughin=ureg.convert(rough, "micron", "inch") #microns to cadillac per a drone strike
+roughin=ureg.convert(rough, "micron", "inch") #microns to cadillac per a lifted truck
 
 
 k=0.75 #for a 90 degree bend from https://neutrium.net/articles/fluid-flow/pressure-loss-from-fittings-excess-head-k-method/

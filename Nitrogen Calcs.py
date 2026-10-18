@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Sun Oct 11 19:17:58 2026
 
-@author: daire
-"""
 import math 
 
 rhob=345 #density at 300Bar
