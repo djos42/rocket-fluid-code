@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-"""The following was written by Claude based on a code I gave it"""
-
 """
 Pressure budget GUI - wrapper around the feed-line pressure drop script.
 Your original script is untouched: compute() below repeats the same
@@ -8,12 +6,14 @@ rocketprops / CoolProp calls in the same order, with the inputs coming
 from the window instead of being hard-coded.
 
 pip install PySide6 rocketprops CoolProp
+Keep logo.png in the same folder as this file (used as the window icon).
 Run from a terminal (python pressure_drop_gui.py) or from Spyder.
 """
+import os
 import sys
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFrame, QGraphicsDropShadowEffect, QGridLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget)
@@ -23,12 +23,18 @@ from rocketprops.line_supt import calc_line_vel_dp
 from rocketprops.rocket_prop import get_prop
 from rocketprops.valve_supt import cv_valve_dp
 
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:                      # e.g. pasted into a console
+    HERE = os.getcwd()
+ICON_PATH = os.path.join(HERE, "logo.png")
+
 # ---------------------------------------------------------------- settings
 K_BEND = 0.75                  # loss coefficient per bend (same as your script)
-SHOW_FLASH_CHECK = True        # extra row: downstream pressure vs vapor pressure
-FLUIDS = {                     # label: (rocketprops name, CoolProp name)
-    "nitrous oxide": ("N2O", "N2O"),
-    "ethanol": ("ethanol", "Ethanol"),
+FLASH_THRESHOLD_BAR = 55.0     # nitrous oxide: downstream pressure must stay above this
+FLUIDS = {                     # label: (rocketprops name, CoolProp name, flash check, filter Cv)
+    "nitrous oxide": ("N2O", "N2O", True, False),
+    "ethanol": ("ethanol", "Ethanol", False, True),
 }
 IN_PER_M, LBM_PER_KG, PSI_PER_BAR, FT_PER_M = 39.37007874, 2.20462262, 14.5037738, 3.28083990
 
@@ -49,19 +55,20 @@ GROUPS = [
     ("valves", [
         ("cv_main", "main valve Cv", "5", ""),
         ("cv_check", "check valve Cv", "2", ""),
+        ("cv_filter", "filter Cv", "1", ""),          # ethanol only
     ]),
 ]
 
-CYAN, VIOLET, MAGENTA, PINK, AMBER, RED = (
-    "#19f3ff", "#9b5cff", "#ff2bd6", "#ff8bd9", "#ffb000", "#ff3860")
-SEG_COLORS = [CYAN, VIOLET, MAGENTA, PINK]
-SEG_NAMES = ["line", "dynamic", "main valve", "check valve"]
+CYAN, VIOLET, MAGENTA, PINK, BLUE, AMBER, RED = (
+    "#19f3ff", "#9b5cff", "#ff2bd6", "#ff8bd9", "#4d7cff", "#ffb000", "#ff3860")
+SEGMENTS = [("line", "line", CYAN), ("dyn", "dynamic", VIOLET), ("filter", "filter", BLUE),
+            ("main", "main valve", MAGENTA), ("check", "check valve", PINK)]
 
 
 # ------------------------------------------------------------- calculation
 def compute(fluid, od, wall, length_m, mdot, p_bar, t_c, rough_um, bends,
-            cv_main, cv_check):
-    rp_name, cp_name = FLUIDS[fluid]
+            cv_main, cv_check, cv_filter=None):
+    rp_name, cp_name, flash_check, has_filter = FLUIDS[fluid]
     lin = length_m * IN_PER_M
     wpps = mdot * LBM_PER_KG
     ppsi = p_bar * PSI_PER_BAR
@@ -85,15 +92,20 @@ def compute(fluid, od, wall, length_m, mdot, p_bar, t_c, rough_um, bends,
     rho = PropsSI('D', 'T', tk, 'P', ppa, cp_name)
     dplbar = 0.5 * rho * fv ** 2 / 1e5       # dynamic pressure, bar
 
+    dpbarf = None                            # filter (ethanol only), as in your commented block
+    if has_filter:
+        dpf = cv_valve_dp(pObj, Cv=cv_filter, wdotPPS=wpps, TdegR=tr, Ppsia=ppsi)
+        dpbarf = dpf / PSI_PER_BAR
+
     dpmv = cv_valve_dp(pObj, Cv=cv_main, wdotPPS=wpps, TdegR=tr, Ppsia=ppsi)
     dpcv = cv_valve_dp(pObj, Cv=cv_check, wdotPPS=wpps, TdegR=tr,
                        Ppsia=(ppsi - dpmv))
     dpbarmv, dpbarcv = dpmv / PSI_PER_BAR, dpcv / PSI_PER_BAR
 
-    total = dplbar + dpbarmv + dpbarcv + dpbarl
-    psat = PropsSI('P', 'T', tk, 'Q', 0, cp_name) / 1e5 if SHOW_FLASH_CHECK else None
-    return dict(vel=fv, line=dpbarl, dyn=dplbar, main=dpbarmv, check=dpbarcv,
-                total=total, psat=psat, p=p_bar, id=ind)
+    total = dplbar + dpbarmv + dpbarcv + dpbarl + (dpbarf or 0.0)
+    limit = FLASH_THRESHOLD_BAR if flash_check else None
+    return dict(vel=fv, line=dpbarl, dyn=dplbar, filter=dpbarf, main=dpbarmv,
+                check=dpbarcv, total=total, limit=limit, p=p_bar, id=ind)
 
 
 # ------------------------------------------------------------------ widgets
@@ -111,17 +123,21 @@ class BudgetBar(QWidget):
     def paintEvent(self, _):
         q = QPainter(self)
         W, top, h = self.width() - 2, 14, 28
+        d = self.d
+        active = [s for s in SEGMENTS
+                  if (d is None and s[0] != "filter") or (d is not None and d.get(s[0]) is not None)]
         q.setPen(QPen(QColor("#2b1d52"), 1))
         q.setBrush(QColor("#0d0719"))
         q.drawRect(1, top, W, h)
-        if self.d:
-            d, x = self.d, 1.0
-            for val, col in zip((d["line"], d["dyn"], d["main"], d["check"]), SEG_COLORS):
-                w = min(max(val, 0) / d["p"] * W, 1 + W - x)
+        if d:
+            x = 1.0
+            for key, _, col in active:
+                w = min(max(d[key], 0) / d["p"] * W, 1 + W - x)
                 q.fillRect(int(x), top + 1, int(w), h - 1, QColor(col))
                 x += w
-            if d["psat"] is not None:
-                tx = int(1 + max(0.0, (d["p"] - d["psat"]) / d["p"]) * W)
+            if d["limit"] is not None:
+                frac = min(1.0, max(0.0, (d["p"] - d["limit"]) / d["p"]))
+                tx = int(1 + frac * W)
                 q.setPen(QPen(QColor(AMBER), 2))
                 q.drawLine(tx, top - 8, tx, top + h + 8)
                 q.setPen(QColor(AMBER))
@@ -129,7 +145,7 @@ class BudgetBar(QWidget):
                 lw = q.fontMetrics().horizontalAdvance(label)
                 q.drawText(min(max(tx - lw // 2, 0), self.width() - lw), top + h + 22, label)
         lx = 2
-        for name, col in zip(SEG_NAMES, SEG_COLORS):
+        for _, name, col in active:
             q.fillRect(lx, top + h + 38, 9, 9, QColor(col))
             q.setPen(QColor("#7f6fb8"))
             q.drawText(lx + 14, top + h + 47, name)
@@ -181,8 +197,9 @@ class Window(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("pressure budget")
-        self.resize(1020, 700)
-        self.edits, self.out = {}, {}
+        self.resize(1020, 780)
+        self.edits, self.out, self.out_rows = {}, {}, {}
+        self.filter_inputs = []
         self.timer = QTimer(self, singleShot=True, interval=120)
         self.timer.timeout.connect(self.recalc)
 
@@ -206,7 +223,7 @@ class Window(QWidget):
         left.addWidget(cap_fluid)
         self.fluid = QComboBox()
         self.fluid.addItems(FLUIDS.keys())
-        self.fluid.currentIndexChanged.connect(self.timer.start)
+        self.fluid.currentIndexChanged.connect(self.on_fluid)
         left.addWidget(self.fluid)
 
         for gname, fields in GROUPS:
@@ -228,6 +245,8 @@ class Window(QWidget):
                 grid.addWidget(lab, i, 0)
                 grid.addWidget(e, i, 1)
                 grid.addWidget(u, i, 2)
+                if key == "cv_filter":
+                    self.filter_inputs = [lab, e, u]
             grid.setColumnMinimumWidth(0, 150)
             grid.setColumnMinimumWidth(1, 110)
             grid.setColumnMinimumWidth(2, 34)
@@ -258,16 +277,16 @@ class Window(QWidget):
         rows = QGridLayout()
         rows.setVerticalSpacing(7)
         spec = [("vel", "line velocity", "m/s"), ("line", "line (friction + bends)", "bar"),
-                ("dyn", "dynamic pressure", "bar"), ("main", "main valve", "bar"),
-                ("check", "check valve", "bar")]
+                ("dyn", "dynamic pressure", "bar"), ("filter", "filter", "bar"),
+                ("main", "main valve", "bar"), ("check", "check valve", "bar")]
         for i, (k, name, unit) in enumerate(spec):
-            v = QLabel("--")
+            nl, v, ul = QLabel(name), QLabel("--"), QLabel(unit)
             v.setAlignment(Qt.AlignRight)
-            self.out[k] = v
-            rows.addWidget(QLabel(name), i, 0)
-            rows.addWidget(v, i, 1)
-            ul = QLabel(unit)
             ul.setObjectName("dim")
+            self.out[k] = v
+            self.out_rows[k] = (nl, v, ul)
+            rows.addWidget(nl, i, 0)
+            rows.addWidget(v, i, 1)
             rows.addWidget(ul, i, 2)
         rows.setColumnStretch(0, 1)
         rl.addLayout(rows)
@@ -279,11 +298,22 @@ class Window(QWidget):
 
         self.scan = Scanlines(self)
         self.scan.raise_()
+        self.sync_fluid()
         self.recalc()
 
     def resizeEvent(self, e):
         self.scan.setGeometry(self.rect())
         self.scan.raise_()
+
+    def sync_fluid(self):
+        """Show the filter input and output row only for fluids that use one."""
+        show = FLUIDS[self.fluid.currentText()][3]
+        for w in self.filter_inputs + list(self.out_rows["filter"]):
+            w.setVisible(show)
+
+    def on_fluid(self):
+        self.sync_fluid()
+        self.timer.start()
 
     def reset(self):
         for _, fields in GROUPS:
@@ -304,26 +334,31 @@ class Window(QWidget):
         return val
 
     def recalc(self):
-        vals = {k: self._num(k) for k in self.edits}
+        fluid = self.fluid.currentText()
+        has_filter = FLUIDS[fluid][3]
+        keys = [k for k in self.edits if has_filter or k != "cv_filter"]
+        vals = {k: self._num(k) for k in keys}
         if any(v is None for v in vals.values()):
             return self.fail("check the highlighted inputs")
         try:
-            r = compute(self.fluid.currentText(), vals["od"], vals["wall"], vals["length"],
+            r = compute(fluid, vals["od"], vals["wall"], vals["length"],
                         vals["mdot"], vals["p"], vals["t"], vals["rough"], vals["bends"],
-                        vals["cv_main"], vals["cv_check"])
+                        vals["cv_main"], vals["cv_check"], vals.get("cv_filter"))
         except Exception as ex:                     # show the problem, keep the window alive
             return self.fail(str(ex))
         self.big.setText(f"{r['total']:.2f} bar")
-        for k in ("vel", "line", "dyn", "main", "check"):
-            self.out[k].setText(f"{r[k]:.3f}" if k != "vel" else f"{r[k]:.2f}")
+        for k in ("vel", "line", "dyn", "filter", "main", "check"):
+            if r[k] is None:
+                continue
+            self.out[k].setText(f"{r[k]:.2f}" if k == "vel" else f"{r[k]:.3f}")
         self.bar.set_data(r)
         down = r["p"] - r["total"]
-        if r["psat"] is None:
-            msg, col = f"bore {r['id']:.3f} in", "#7f6fb8"
-        elif down < r["psat"]:
-            msg, col = (f"downstream {down:.1f} bar  <  vapor {r['psat']:.1f} bar : liquid would flash", RED)
+        if r["limit"] is None:
+            msg, col = f"downstream {down:.1f} bar", "#7f6fb8"
+        elif down < r["limit"]:
+            msg, col = (f"downstream {down:.1f} bar  <  {r['limit']:.0f} bar limit : liquid would flash", RED)
         else:
-            msg, col = (f"downstream {down:.1f} bar  >  vapor {r['psat']:.1f} bar", "#7f6fb8")
+            msg, col = f"downstream {down:.1f} bar  >  {r['limit']:.0f} bar limit", "#7f6fb8"
         self.status.setStyleSheet(f"color:{col};")
         self.status.setText(msg)
 
@@ -337,8 +372,12 @@ class Window(QWidget):
 
 
 def main():
+    if sys.platform == "win32":                    # lets Windows show our icon in the taskbar
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("pressure.budget.gui.1")
     app = QApplication.instance() or QApplication(sys.argv)
     app.setStyleSheet(QSS)
+    app.setWindowIcon(QIcon(ICON_PATH))
     w = Window()
     w.show()
     app.exec()

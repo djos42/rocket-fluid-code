@@ -15,9 +15,9 @@ from CoolProp.CoolProp import PropsSI
 """Inputs"""
 l=2 #line length in metres
 lin= ureg.convert(l, "metres", "inch")   #metres to inches
-w= 2.13
+w= 0.42
 wpps= ureg.convert(w, "kg/s", "lb/s")   #kg/s to freedom units
-v=20 
+v=10 
 vfts= ureg.convert(v, "m/s", "ft/s")#m/s to football pitches per eagle cry
 
 p= 100 #tank pressure in bar
@@ -31,14 +31,14 @@ roughin=ureg.convert(rough, "micron", "inch") #microns to cadillac per a lifted 
 
 
 k=0.75 #for a 90 degree bend from https://neutrium.net/articles/fluid-flow/pressure-loss-from-fittings-excess-head-k-method/
-bends=2 #guess at number of bends
+bends=6 #guess at number of bends
 
 kbend=k*bends
 
-ind=0.5 - (2*0.035) #pipe inner diameter for a 1/2" tube as per https://www.swagelok.com/downloads/webcatalogs/en/ms-01-107.pdf
+ind=0.25 - (2*0.028) #pipe inner diameter for a 1/2" tube as per https://www.swagelok.com/downloads/webcatalogs/en/ms-01-107.pdf
 
 '''Line Pressure Drop'''
-pObj = get_prop('N2O')
+pObj = get_prop('Ethanol')
 
 '''ID, deltaP = calc_line_id_dp( pObj, TdegR=tr, Ppsia=ppsi,
                               wdotPPS=wpps, velFPS=vfts,
@@ -56,7 +56,7 @@ dpbarl= ureg.convert(dp, "psi", "bar") #line pressure loss in Bar
 print( 'Fluid Velocity = %g m/sec, Pressure Drop =%g bar\n'%(fv, dpbarl) )
 
 '''Dynamic Pressure Loss'''
-rho = PropsSI('D', 'T', tk, 'P', ppa, 'N2O')
+rho = PropsSI('D', 'T', tk, 'P', ppa, 'Ethanol')
 dpl=0.5*rho*(fv**2) #pa
 
 dplbar=ureg.convert(dpl, "pascal", "bar") 
@@ -66,8 +66,8 @@ print( 'Dynamic Pressure Loss =%g bar\n'%(dplbar) )
 
 """Valve Pressue Drops"""
 '''inputs'''
-mvcv=5 #main valve cv
-cvcv= 2 #check valve cv
+mvcv=2 #main valve cv
+cvcv= 1.1 #check valve cv
 fcv= 1 #filter cv
 
 '''Filter'''
